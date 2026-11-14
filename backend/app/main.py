@@ -24,6 +24,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 TOKEN_TTL_MINUTES = int(os.getenv("TOKEN_TTL_MINUTES", "30"))
 ALGORITHM = "HS256"
+TOKEN_ISSUER = "nova-vpn-api"
 SUPPORTED_PROTOCOLS = {"VLESS", "VMESS", "TROJAN", "SHADOWSOCKS", "HYSTERIA", "HYSTERIA2"}
 COUNTRY_CODE = re.compile(r"^[A-Z]{2}$")
 PROFILE_SCHEMES = {
@@ -35,7 +36,7 @@ PROFILE_SCHEMES = {
     "HYSTERIA2": {"hysteria2", "hy2"},
 }
 
-app = FastAPI(title="NOVA VPN API", version="0.2.1", docs_url=None, redoc_url=None)
+app = FastAPI(title="NOVA VPN API", version="0.3.0", docs_url=None, redoc_url=None)
 _login_attempts: dict[str, list[float]] = {}
 
 
@@ -44,8 +45,10 @@ def utc_now() -> str:
 
 
 def check_runtime_secrets() -> None:
-    if len(ADMIN_USERNAME) < 1 or len(ADMIN_PASSWORD) < 16:
-        raise RuntimeError("Set ADMIN_USERNAME and a unique ADMIN_PASSWORD of at least 16 characters")
+    if not ADMIN_USERNAME.strip() or len(ADMIN_USERNAME) > 128:
+        raise RuntimeError("Set ADMIN_USERNAME to a non-empty value of at most 128 characters")
+    if len(ADMIN_PASSWORD) < 16 or len(ADMIN_PASSWORD) > 512:
+        raise RuntimeError("Set a unique ADMIN_PASSWORD between 16 and 512 characters")
     if len(JWT_SECRET) < 32 or "replace-with" in JWT_SECRET:
         raise RuntimeError("Set JWT_SECRET to at least 32 random characters")
     if not 5 <= TOKEN_TTL_MINUTES <= 240:
@@ -91,6 +94,18 @@ def initialize_database() -> None:
 def startup() -> None:
     check_runtime_secrets()
     initialize_database()
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path == "/admin" or request.url.path.startswith("/api/v1/admin/") or request.url.path.endswith("/config"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 class LoginPayload(BaseModel):
@@ -142,7 +157,8 @@ class ServerInput(BaseModel):
             raise ValueError("Configuration cannot be blank")
         if "://" in value:
             scheme = value.split("://", 1)[0].lower()
-            if scheme not in {scheme for schemes in PROFILE_SCHEMES.values() for scheme in schemes}:
+            known_schemes = {item for schemes in PROFILE_SCHEMES.values() for item in schemes}
+            if scheme not in known_schemes:
                 raise ValueError("Unsupported profile URI scheme")
         elif value.startswith("{"):
             try:
@@ -157,9 +173,8 @@ class ServerInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_profile_protocol_and_location(self):
-        value = self.config
-        if "://" in value:
-            scheme = value.split("://", 1)[0].lower()
+        if "://" in self.config:
+            scheme = self.config.split("://", 1)[0].lower()
             if scheme not in PROFILE_SCHEMES[self.protocol]:
                 raise ValueError("Profile URI scheme does not match the selected protocol")
         if self.location_verified and (not self.country_code or not (self.country_name_fa or self.country_name_en)):
@@ -172,7 +187,13 @@ def admin_claims(authorization: str | None = Header(default=None)) -> dict:
         raise HTTPException(status_code=401, detail="Admin authentication required")
     token = authorization[7:].strip()
     try:
-        claims = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        claims = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[ALGORITHM],
+            issuer=TOKEN_ISSUER,
+            options={"require_iss": True, "require_sub": True, "require_exp": True, "require_iat": True},
+        )
     except JWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
     if claims.get("sub") != ADMIN_USERNAME or claims.get("scope") != "admin":
@@ -214,6 +235,7 @@ def health() -> dict:
 
 @app.post("/api/v1/admin/login")
 def login(payload: LoginPayload, request: Request) -> dict:
+    # Do not trust X-Forwarded-For here. Configure trusted-proxy rate limiting at the edge.
     key = request.client.host if request.client else "unknown"
     if login_is_limited(key):
         raise HTTPException(status_code=429, detail="Too many login attempts")
@@ -224,8 +246,13 @@ def login(payload: LoginPayload, request: Request) -> dict:
         _login_attempts.setdefault(key, []).append(time.monotonic())
         raise HTTPException(status_code=401, detail="Invalid credentials")
     _login_attempts.pop(key, None)
-    expiry = datetime.now(timezone.utc) + timedelta(minutes=TOKEN_TTL_MINUTES)
-    token = jwt.encode({"sub": ADMIN_USERNAME, "scope": "admin", "exp": expiry}, JWT_SECRET, algorithm=ALGORITHM)
+    now = datetime.now(timezone.utc)
+    expiry = now + timedelta(minutes=TOKEN_TTL_MINUTES)
+    token = jwt.encode(
+        {"sub": ADMIN_USERNAME, "scope": "admin", "iat": now, "exp": expiry, "iss": TOKEN_ISSUER, "jti": secrets.token_urlsafe(16)},
+        JWT_SECRET,
+        algorithm=ALGORITHM,
+    )
     return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_TTL_MINUTES * 60}
 
 
@@ -238,11 +265,11 @@ def list_servers() -> dict:
 
 @app.get("/api/v1/servers/{server_id}/config")
 def get_server_config(server_id: str) -> None:
-    # Profile delivery is deliberately disabled until client authentication, entitlement checks,
-    # and production abuse controls are implemented. An app-embedded shared secret is not auth.
+    # Fail closed: the app has no user/device authorization yet. Never make raw configs
+    # public or use an app-embedded shared secret as a substitute for user authorization.
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="VPN profile delivery is not enabled until client access controls are configured",
+        detail="VPN profile delivery is unavailable until client authorization is configured",
         headers={"Cache-Control": "no-store"},
     )
 
