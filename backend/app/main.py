@@ -9,12 +9,12 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Iterator
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
 from jose import JWTError, jwt
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = os.getenv("DATABASE_PATH", str(APP_DIR.parent / "nova.sqlite3"))
@@ -25,8 +25,16 @@ TOKEN_TTL_MINUTES = int(os.getenv("TOKEN_TTL_MINUTES", "30"))
 ALGORITHM = "HS256"
 SUPPORTED_PROTOCOLS = {"VLESS", "VMESS", "TROJAN", "SHADOWSOCKS", "HYSTERIA", "HYSTERIA2"}
 COUNTRY_CODE = re.compile(r"^[A-Z]{2}$")
+PROFILE_SCHEMES = {
+    "VLESS": {"vless"},
+    "VMESS": {"vmess"},
+    "TROJAN": {"trojan"},
+    "SHADOWSOCKS": {"ss", "shadowsocks"},
+    "HYSTERIA": {"hysteria"},
+    "HYSTERIA2": {"hysteria2", "hy2"},
+}
 
-app = FastAPI(title="NOVA VPN API", version="0.1.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="NOVA VPN API", version="0.2.0", docs_url=None, redoc_url=None)
 _login_attempts: dict[str, list[float]] = {}
 
 
@@ -99,6 +107,14 @@ class ServerInput(BaseModel):
     enabled: bool = False
     config: str = Field(min_length=1, max_length=200_000)
 
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Name cannot be blank")
+        return value
+
     @field_validator("protocol")
     @classmethod
     def protocol_supported(cls, value: str) -> str:
@@ -120,9 +136,44 @@ class ServerInput(BaseModel):
     @field_validator("config")
     @classmethod
     def config_not_blank(cls, value: str) -> str:
-        if not value.strip():
+        value = value.strip()
+        if not value:
             raise ValueError("Configuration cannot be blank")
-        return value.strip()
+        # Accept a URI for the declared protocol, or syntactically valid JSON profile.
+        # This is format validation only: it does not prove that the profile works.
+        if "://" in value:
+            scheme = value.split("://", 1)[0].lower()
+            if scheme not in PROFILE_SCHEMES[cls._validation_protocol]:
+                raise ValueError("Profile URI scheme does not match the selected protocol")
+        elif value.startswith("{"):
+            import json
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Profile JSON is malformed") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("Profile JSON must be an object")
+        else:
+            raise ValueError("Profile must be a matching protocol URI or JSON object")
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_profile_protocol_for_validation(cls, values):
+        # Pydantic validators are intentionally not used to inspect or log profile contents.
+        # A model-level post-validation performs the protocol/profile consistency check below.
+        return values
+
+    @model_validator(mode="after")
+    def validate_profile_protocol(self):
+        value = self.config
+        if "://" in value:
+            scheme = value.split("://", 1)[0].lower()
+            if scheme not in PROFILE_SCHEMES[self.protocol]:
+                raise ValueError("Profile URI scheme does not match the selected protocol")
+        if self.location_verified and (not self.country_code or not (self.country_name_fa or self.country_name_en)):
+            raise ValueError("Verified location requires a country code and at least one country name")
+        return self
 
 
 def admin_claims(authorization: str | None = Header(default=None)) -> dict:
@@ -195,15 +246,14 @@ def list_servers() -> dict:
 
 
 @app.get("/api/v1/servers/{server_id}/config")
-def get_server_config(server_id: str) -> dict:
-    with database() as conn:
-        row = conn.execute("SELECT id, protocol, config FROM servers WHERE id = ? AND enabled = 1", (server_id,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Server is unavailable")
-    # This endpoint intentionally delivers a profile only when requested. A profile delivered to
-    # a device is not secret from that device's owner; production deployments need an access and
-    # abuse-control policy appropriate to the service.
-    return {"server_id": row["id"], "protocol": row["protocol"], "config": row["config"]}
+def get_server_config(server_id: str) -> None:
+    # Profile delivery is deliberately disabled until end-user authentication, entitlement checks,
+    # and production abuse controls are implemented. An app-embedded shared secret is not auth.
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="VPN profile delivery is not enabled until client access controls are configured",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/v1/admin/servers")
@@ -221,7 +271,7 @@ def create_server(payload: ServerInput, _: dict = Depends(admin_claims)) -> dict
             (id, name, protocol, country_code, country_name_fa, country_name_en,
              location_verified, enabled, config, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (server_id, payload.name.strip(), payload.protocol, payload.country_code,
+            (server_id, payload.name, payload.protocol, payload.country_code,
              payload.country_name_fa, payload.country_name_en, int(payload.location_verified),
              int(payload.enabled), payload.config, utc_now()))
         row = conn.execute("SELECT * FROM servers WHERE id = ?", (server_id,)).fetchone()
@@ -245,7 +295,7 @@ def update_server(server_id: str, payload: ServerInput, _: dict = Depends(admin_
         cursor = conn.execute("""UPDATE servers SET name = ?, protocol = ?, country_code = ?,
             country_name_fa = ?, country_name_en = ?, location_verified = ?, enabled = ?,
             config = ?, updated_at = ? WHERE id = ?""",
-            (payload.name.strip(), payload.protocol, payload.country_code, payload.country_name_fa,
+            (payload.name, payload.protocol, payload.country_code, payload.country_name_fa,
              payload.country_name_en, int(payload.location_verified), int(payload.enabled),
              payload.config, utc_now(), server_id))
         if cursor.rowcount == 0:
@@ -255,13 +305,14 @@ def update_server(server_id: str, payload: ServerInput, _: dict = Depends(admin_
 
 
 @app.delete("/api/v1/admin/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_server(server_id: str, _: dict = Depends(admin_claims)) -> None:
+def delete_server(server_id: str, _: dict = Depends(admin_claims)) -> Response:
     with database() as conn:
         cursor = conn.execute("DELETE FROM servers WHERE id = ?", (server_id,))
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Server not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/admin", include_in_schema=False)
 def admin_page() -> FileResponse:
-    return FileResponse(APP_DIR / "admin.html")
+    return FileResponse(APP_DIR / "admin.html", headers={"Cache-Control": "no-store"})
