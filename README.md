@@ -1,22 +1,12 @@
 # NOVA VPN
 
-NOVA VPN is an Android VPN client and separately hosted server-management backend for JEYRAN GROUP.
+## Current work
 
-## Project status
+- Flutter Android client with bilingual server directory, refresh, saved selection, and a real Xray/V2Ray engine adapter.
+- Admin-managed backend with an empty-by-default server catalog. Public profile delivery remains disabled until end-user authorization and abuse controls are ready.
+- Connection attempt order: selected server first, then other active servers once each. Each candidate must produce an explicit engine `CONNECTED` event within the timeout; failures move on. Permission and backend access failures stop the sequence.
+- No public/shared proxy credentials are committed or bundled.
 
-This repository is currently empty. The first implementation is being established on a dedicated development branch. No VPN servers or working configurations have been supplied, so none are bundled or shown as available. A connection is not reported as established until the VPN engine confirms it.
+## Security and test status
 
-## Planned layout
-
-- `app/` — Flutter Android client; server configuration is fetched only when needed and is never displayed in the user interface.
-- `backend/` — separately deployed API and authenticated administrator interface for server metadata and configuration management.
-- `docs/` — architecture, deployment, privacy, and release guidance.
-
-## Security notes
-
-- Never commit administrator passwords, signing keys, API secrets, or real server configurations.
-- The backend must be deployed behind HTTPS before release.
-- Any configuration delivered to a client device can potentially be extracted from that device. Hiding it in the UI is not equivalent to keeping it secret.
-- Server locations and health are only shown when backed by verified metadata and real checks; no sample or placeholder servers are presented as functional.
-
-See the project documentation as implementation is added.
+The profile links pasted in conversation should be treated as exposed public credentials. They have not been copied into this repository. A test profile must not be stored in a public repo or APK. No actual Android build, successful tunnel, or server health check has been claimed. See `docs/FAILOVER.md`, `docs/ENGINE_INTEGRATION.md`, and `docs/TESTING_PLAN.md`.
