@@ -1,18 +1,20 @@
 # Flutter app
 
-This folder starts the real client-side server directory. It fetches server metadata from the separate backend and does not bundle server profiles or invent entries.
+Flutter Android client for NOVA VPN. It retrieves only active server metadata from the separate backend; the server directory contains no profile/configuration field. The initial database is empty, so the app does not invent available locations.
 
 ## Run
 
-Install Flutter for Android, then from this folder:
+Install Flutter and Android SDK, then from this folder:
 
 ```sh
 flutter pub get
 flutter run --dart-define=API_BASE_URL=https://your-api.example
 ```
 
-The API URL is a deployment setting, not a credential. For local Android emulator development, use `http://10.0.2.2:8000` only with the Android cleartext-development setting enabled deliberately; do not ship HTTP in a release build.
+The API URL is a deployment setting, not a credential. For local Android emulator development, use a local backend address only after explicitly enabling cleartext traffic in a debug-only Android manifest; never ship that setting in a release build.
 
 ## Current implementation boundary
 
-The VPN engine is not yet integrated in this repository. Therefore this client does not show a pretend connect button or report a connection. Integration must use a supported Android `VpnService`-based engine, request Android VPN permission, consume the returned profile only at connection time, and update UI state only from engine status callbacks. Check the engine's exact package/API and supported protocol list before selecting its version. Real servers and profiles must be provided and tested by the owner; the app starts with an empty list.
+The splash, server directory, refresh, saved selection, and basic settings UI exist. The VPN engine is **not integrated**. The app deliberately has no connect/disconnect button and does not report a connection until a maintained Android `VpnService`-based engine is selected, integrated, tested with owner-provided profiles, and its status callbacks are wired. Backend profile delivery is also disabled pending user authentication and abuse controls.
+
+No ping, speed, traffic, user statistics, advertisements, unsupported settings, or sample servers are displayed.
