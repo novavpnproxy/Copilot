@@ -12,7 +12,8 @@ class ApiService {
       throw StateError('API_BASE_URL is not configured for this build.');
     }
     final base = Uri.parse(_baseUrl);
-    if (base.scheme != 'https' && !(base.scheme == 'http' && (base.host == '10.0.2.2' || base.host == '127.0.0.1' || base.host == 'localhost'))) {
+    final localHost = const {'10.0.2.2', '127.0.0.1', 'localhost'};
+    if (base.scheme != 'https' && !(base.scheme == 'http' && localHost.contains(base.host))) {
       throw StateError('The API must use HTTPS except for local development.');
     }
     return base.resolve(path);
@@ -28,6 +29,22 @@ class ApiService {
     return (decoded['servers'] as List)
         .map((item) => VpnServer.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList(growable: false);
+  }
+
+  /// Requests the selected profile only at connection time. The backend currently
+  /// responds 503 until end-user authorization and abuse controls are deployed.
+  Future<String> fetchServerConfig(String serverId) async {
+    final response = await _client
+        .get(_uri('/api/v1/servers/${Uri.encodeComponent(serverId)}/config'), headers: const {'Cache-Control': 'no-store'})
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      throw ApiException('Server profile is unavailable (${response.statusCode}).');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> || decoded['config'] is! String || (decoded['config'] as String).isEmpty) {
+      throw const FormatException('Invalid server profile response.');
+    }
+    return decoded['config'] as String;
   }
 
   void close() => _client.close();
