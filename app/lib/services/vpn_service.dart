@@ -3,19 +3,18 @@ import 'dart:convert';
 
 import 'package:flutter_v2ray_client/flutter_v2ray.dart';
 
-/// Singleton adapter around the Android Xray/V2Ray engine.
-///
-/// Profile text is accepted only for the duration of a connection attempt; this
-/// service never stores or logs it. `connect` completes only after an explicit
-/// native `CONNECTED` event, not just after the method-channel start call.
+/// رابط اپ با موتور VPN اندروید.
+/// موفقیت اتصال فقط پس از دریافت وضعیت واقعی CONNECTED اعلام می‌شود.
 class VpnService {
   VpnService._() : _engine = V2ray(onStatusChanged: _publishStatus);
 
   static final VpnService instance = VpnService._();
+
   factory VpnService() => instance;
 
   static final StreamController<V2RayStatus> _statuses =
       StreamController<V2RayStatus>.broadcast();
+
   static bool _initialized = false;
   static Future<void>? _initializing;
   static V2RayStatus _latestStatus = V2RayStatus();
@@ -25,24 +24,32 @@ class VpnService {
 
   static void _publishStatus(V2RayStatus status) {
     _latestStatus = status;
-    if (!_statuses.isClosed) _statuses.add(status);
+    if (!_statuses.isClosed) {
+      _statuses.add(status);
+    }
   }
 
   Stream<V2RayStatus> get statusChanges => _statuses.stream;
+
   V2RayStatus get currentStatus => _latestStatus;
 
   Future<void> initialize() async {
     if (_initialized) return;
-    final pending = _initializing;
-    if (pending != null) return pending;
 
-    final future = _engine.initialize(
+    final pending = _initializing;
+    if (pending != null) {
+      await pending;
+      return;
+    }
+
+    final initialization = _engine.initialize(
       notificationIconResourceType: 'mipmap',
       notificationIconResourceName: 'ic_launcher',
     );
-    _initializing = future;
+    _initializing = initialization;
+
     try {
-      await future;
+      await initialization;
       _initialized = true;
     } finally {
       _initializing = null;
@@ -54,20 +61,38 @@ class VpnService {
     required String remark,
     Duration timeout = const Duration(seconds: 25),
   }) async {
-    if (_attemptInProgress) throw const VpnConnectionBusyException();
+    if (_attemptInProgress) {
+      throw const VpnConnectionBusyException();
+    }
+
     _attemptInProgress = true;
+
     try {
       await initialize();
+
       if (!await _engine.requestPermission()) {
         throw const VpnPermissionException();
       }
 
       final config = _toEngineConfig(profile);
       final connected = Completer<void>();
+      final connectedFuture = connected.future;
+
+      // خطای احتمالی را از زمان ساخت Completer مدیریت می‌کنیم؛ سپس همان Future
+      // را پایین‌تر await می‌کنیم تا خطای اتصال به caller برگردد.
+      connectedFuture.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      );
+
       var sawConnecting = false;
-      final statusSubscription = statusChanges.listen((status) {
+      final subscription = statusChanges.listen((status) {
         final state = status.state.toUpperCase();
-        if (state == 'CONNECTING') sawConnecting = true;
+
+        if (state == 'CONNECTING') {
+          sawConnecting = true;
+        }
+
         if (state == 'CONNECTED' && !connected.isCompleted) {
           connected.complete();
         } else if ((state == 'ERROR' ||
@@ -86,18 +111,17 @@ class VpnService {
           proxyOnly: false,
           notificationDisconnectButtonName: 'DISCONNECT',
         );
-        await connected.future.timeout(timeout);
+
+        await connectedFuture.timeout(timeout);
       } on TimeoutException {
         await _stopPreservingFailure();
         throw const VpnConnectionTimeoutException();
-      } on VpnPermissionException {
-        rethrow;
       } catch (_) {
         await _stopPreservingFailure();
-        // Native/plugin exception messages can contain profile material.
+        // جزئیات خطای بومی ممکن است حاوی دادهٔ حساس پروفایل باشند.
         throw const VpnConnectionException();
       } finally {
-        await statusSubscription.cancel();
+        await subscription.cancel();
       }
     } finally {
       _attemptInProgress = false;
@@ -106,14 +130,22 @@ class VpnService {
 
   String _toEngineConfig(String profile) {
     final value = profile.trim();
-    if (value.isEmpty) throw const FormatException('VPN profile is empty.');
+
+    if (value.isEmpty) {
+      throw const FormatException('VPN profile is empty.');
+    }
+
     if (value.contains('://')) {
       return V2ray.parseFromURL(value).getFullConfiguration();
     }
+
     final decoded = jsonDecode(value);
     if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('VPN profile must be a JSON object or supported share link.');
+      throw const FormatException(
+        'VPN profile must be a JSON object or supported share link.',
+      );
     }
+
     return value;
   }
 
@@ -121,7 +153,7 @@ class VpnService {
     try {
       await _engine.stopV2Ray();
     } catch (_) {
-      // Do not replace the original connection error with a stop error.
+      // خطای توقف نباید جای خطای اصلی اتصال را بگیرد.
     }
   }
 
