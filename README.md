@@ -1,24 +1,12 @@
 # NOVA VPN
 
-NOVA VPN is an Android VPN client and a separately deployed server-management backend for JEYRAN GROUP.
+## Current work
 
-## Status
+- Flutter Android client with bilingual server directory, refresh, saved selection, and a real Xray/V2Ray engine adapter.
+- Admin-managed backend with an empty-by-default server catalog. Public profile delivery remains disabled until end-user authorization and abuse controls are ready.
+- Connection attempt order: selected server first, then other active servers once each. Each candidate must produce an explicit engine `CONNECTED` event within the timeout; failures move on. Permission and backend access failures stop the sequence.
+- No public/shared proxy credentials are committed or bundled.
 
-The repository is being built incrementally. The backend database starts with **zero servers**. It does not claim that a server is online or that a VPN connection exists unless a real VPN engine confirms it. Raw profile delivery is intentionally disabled until end-user authorization and abuse controls are implemented.
+## Security and test status
 
-## Layout
-
-- `app/` — Flutter Android client.
-- `backend/` — FastAPI service, SQLite persistence, and authenticated administrator UI/API.
-- `docs/` — architecture and deployment/security notes.
-
-## Development
-
-See `backend/README.md` and `app/README.md` for setup. Do not put real server profiles, credentials, signing keys, or passwords in Git.
-
-## Security notes
-
-- Never commit administrator passwords, signing keys, API secrets, or real server configurations.
-- The backend must be deployed behind HTTPS in production.
-- A VPN profile delivered to a client device can potentially be extracted from that device. Hiding it in the UI does not make it secret.
-- No production VPN engine or server is configured yet. The Flutter client does not present a pretend connection control.
+The profile links pasted in conversation should be treated as exposed public credentials. They have not been copied into this repository. A test profile must not be stored in a public repo or APK. No actual Android build, successful tunnel, or server health check has been claimed. See `docs/FAILOVER.md`, `docs/ENGINE_INTEGRATION.md`, and `docs/TESTING_PLAN.md`.

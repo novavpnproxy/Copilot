@@ -8,12 +8,10 @@ class ApiService {
   static const _baseUrl = String.fromEnvironment('API_BASE_URL');
 
   Uri _uri(String path) {
-    if (_baseUrl.isEmpty) {
-      throw StateError('API_BASE_URL is not configured for this build.');
-    }
+    if (_baseUrl.isEmpty) throw StateError('API_BASE_URL is not configured for this build.');
     final base = Uri.parse(_baseUrl);
-    final localHost = const {'10.0.2.2', '127.0.0.1', 'localhost'};
-    if (base.scheme != 'https' && !(base.scheme == 'http' && localHost.contains(base.host))) {
+    const localHosts = {'10.0.2.2', '127.0.0.1', 'localhost'};
+    if (base.scheme != 'https' && !(base.scheme == 'http' && localHosts.contains(base.host))) {
       throw StateError('The API must use HTTPS except for local development.');
     }
     return base.resolve(path);
@@ -31,18 +29,15 @@ class ApiService {
         .toList(growable: false);
   }
 
-  /// Requests the selected profile only at connection time. The backend currently
-  /// responds 503 until end-user authorization and abuse controls are deployed.
+  /// Fetches a profile only at connect time. The server currently disables this
+  /// endpoint until end-user authorization and abuse controls are deployed.
   Future<String> fetchServerConfig(String serverId) async {
-    final response = await _client
-        .get(_uri('/api/v1/servers/${Uri.encodeComponent(serverId)}/config'), headers: const {'Cache-Control': 'no-store'})
-        .timeout(const Duration(seconds: 15));
-    if (response.statusCode != 200) {
-      throw ApiException('Server profile is unavailable (${response.statusCode}).');
-    }
+    final path = '/api/v1/servers/${Uri.encodeComponent(serverId)}/config';
+    final response = await _client.get(_uri(path), headers: const {'Cache-Control': 'no-store'}).timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) throw ApiException('Server profile unavailable (${response.statusCode}).');
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic> || decoded['config'] is! String || (decoded['config'] as String).isEmpty) {
-      throw const FormatException('Invalid server profile response.');
+      throw const FormatException('Invalid profile response.');
     }
     return decoded['config'] as String;
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_v2ray_client/flutter_v2ray.dart';
 import '../models/vpn_server.dart';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
@@ -19,10 +20,12 @@ class _HomeScreenState extends State<HomeScreen> {
   final StorageService _storage = StorageService();
   final VpnService _vpn = VpnService();
   late Future<List<VpnServer>> _servers;
-  StreamSubscription<String>? _statusSubscription;
+  StreamSubscription<V2RayStatus>? _statusSubscription;
+  Timer? _attemptTimeout;
   VpnServer? _selected;
   String _language = 'fa';
   String? _errorMessage;
+  String _duration = '00:00:00';
   _ConnectionUi _connection = _ConnectionUi.disconnected;
   bool _busy = false;
 
@@ -37,29 +40,39 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) setState(() => _language = value);
     });
     _statusSubscription = _vpn.statusChanges.listen(_handleEngineStatus);
+    _handleEngineStatus(_vpn.currentStatus);
   }
 
-  void _handleEngineStatus(String status) {
+  void _handleEngineStatus(V2RayStatus status) {
     if (!mounted) return;
     setState(() {
-      switch (status) {
+      switch (status.state.toUpperCase()) {
         case 'CONNECTED':
           _connection = _ConnectionUi.connected;
           _busy = false;
+          _attemptTimeout?.cancel();
           _errorMessage = null;
+          _duration = status.duration;
+          break;
         case 'DISCONNECTED':
-          _connection = _ConnectionUi.disconnected;
+          if (_connection == _ConnectionUi.disconnecting) _connection = _ConnectionUi.disconnected;
           _busy = false;
+          _attemptTimeout?.cancel();
+          if (!_vpnConnected) _duration = '00:00:00';
+          break;
         case 'CONNECTING':
           _connection = _ConnectionUi.connecting;
+          break;
         case 'DISCONNECTING':
           _connection = _ConnectionUi.disconnecting;
+          break;
         case 'ERROR':
           _connection = _ConnectionUi.error;
           _busy = false;
+          _attemptTimeout?.cancel();
           _errorMessage = _fa ? 'موتور VPN اتصال را برقرار نکرد.' : 'VPN engine failed to connect.';
+          break;
         default:
-          // Ignore unknown engine states; never infer that they mean connected.
           break;
       }
     });
@@ -79,6 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _attemptTimeout?.cancel();
     _statusSubscription?.cancel();
     _api.close();
     super.dispose();
@@ -101,28 +115,70 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final server = _selected;
-    if (server == null) {
+    final selected = _selected;
+    if (selected == null) {
       _showMessage(_fa ? 'ابتدا یک سرور انتخاب کن.' : 'Select a server first.');
       return;
     }
+    final servers = await _servers;
+    if (!mounted) return;
+    // Try the selected server first, then each other enabled server once.
+    // Never loop indefinitely and never declare success without CONNECTED.
+    final candidates = <VpnServer>[
+      selected,
+      ...servers.where((server) => server.id != selected.id),
+    ];
     setState(() { _busy = true; _connection = _ConnectionUi.connecting; _errorMessage = null; });
-    try {
-      // Backend returns 503 until end-user authorization/abuse controls are deployed.
-      // Consequently the engine is not started with an unauthenticated public profile route.
-      final profile = await _api.fetchServerConfig(server.id);
-      await _vpn.connect(profile: profile, remark: server.name);
-    } catch (error) {
-      if (mounted) setState(() { _busy = false; _connection = _ConnectionUi.error; _errorMessage = _safeError(error); });
+    final failures = <String>[];
+
+    for (var index = 0; index < candidates.length; index++) {
+      if (!mounted) return;
+      final server = candidates[index];
+      setState(() {
+        _selected = server;
+        _connection = _ConnectionUi.connecting;
+        _errorMessage = index == 0 ? null : (_fa ? 'سرور پاسخ نداد؛ تلاش با سرور بعدی…' : 'Server did not connect; trying the next server…');
+      });
+      try {
+        final profile = await _api.fetchServerConfig(server.id);
+        await _vpn.connect(profile: profile, remark: server.name);
+        // connect() returns only after the native engine emits CONNECTED.
+        if (!mounted) return;
+        await _storage.writeServerId(server.id);
+        setState(() { _busy = false; _connection = _ConnectionUi.connected; _errorMessage = null; });
+        return;
+      } on VpnPermissionException catch (error) {
+        if (!mounted) return;
+        setState(() { _busy = false; _connection = _ConnectionUi.disconnected; _errorMessage = _safeError(error); });
+        return; // Permission is global; trying another server cannot help.
+      } on ApiException catch (error) {
+        // The current backend returns 503 for all profiles until user access controls exist.
+        // Stop here instead of making the same failing API request for every server.
+        if (!mounted) return;
+        setState(() { _busy = false; _connection = _ConnectionUi.error; _errorMessage = _safeError(error); });
+        return;
+      } catch (error) {
+        failures.add(_safeError(error));
+        try { await _vpn.disconnect(); } catch (_) { /* Continue to the next candidate. */ }
+      }
     }
+
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _connection = _ConnectionUi.error;
+      _errorMessage = _fa
+          ? 'اتصال به هیچ‌یک از ${candidates.length} سرور انتخاب‌شده برقرار نشد.'
+          : 'Could not connect to any of the ${candidates.length} available servers.';
+    });
   }
 
   String _safeError(Object error) {
-    // Avoid rendering exception payloads that might accidentally contain profile details.
     if (error is VpnPermissionException) return _fa ? 'مجوز VPN داده نشد.' : 'VPN permission was denied.';
-    if (error is ApiException) return _fa ? 'دریافت امن پروفایل سرور ممکن نیست؛ سرویس دسترسی کاربران هنوز فعال نشده است.' : 'Secure server profile is unavailable; client access is not enabled yet.';
-    if (error is FormatException) return _fa ? 'ساختار پروفایل سرور معتبر نیست.' : 'Server profile format is invalid.';
-    return _fa ? 'اتصال VPN برقرار نشد. دوباره تلاش کن.' : 'VPN connection failed. Try again.';
+    if (error is ApiException) return _fa ? 'دریافت امن پروفایل ممکن نیست؛ دسترسی کاربران هنوز در Backend فعال نشده است.' : 'Secure profile access is not enabled on the backend yet.';
+    if (error is FormatException || error is ArgumentError) return _fa ? 'ساختار پروفایل سرور معتبر نیست.' : 'Server profile format is invalid.';
+    if (error is VpnConnectionTimeoutException) return _fa ? 'مهلت اتصال این سرور تمام شد.' : 'This server connection timed out.';
+    return _fa ? 'اتصال به این سرور ناموفق بود.' : 'This server connection failed.';
   }
 
   void _showMessage(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -166,8 +222,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     _sectionHeading(_fa ? 'مکان اتصال' : 'Connection location', _fa ? '${servers.length} سرور فعال' : '${servers.length} active servers'),
                     const SizedBox(height: 12),
                     ...servers.map(_serverTile),
-                    const SizedBox(height: 12),
-                    if (!_vpnConnected) _profileServiceNotice(),
                   ]),
                 );
               },
@@ -187,6 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(color: const Color(0xFF101A2B), borderRadius: BorderRadius.circular(20), border: Border.all(color: _vpnConnected ? const Color(0xFF35D0BA) : Colors.white12)),
         child: Column(children: [
           Text(_stateLabel, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _vpnConnected ? const Color(0xFF35D0BA) : Colors.white70)),
+          if (_vpnConnected) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_duration, style: const TextStyle(color: Colors.white60))),
           const SizedBox(height: 13),
           SizedBox(width: 112, height: 112, child: OutlinedButton(
             onPressed: _busy ? null : _toggleConnection,
@@ -194,15 +249,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: _busy ? const CircularProgressIndicator() : Icon(_vpnConnected ? Icons.stop_rounded : Icons.power_settings_new, size: 42, color: const Color(0xFF35D0BA)),
           )),
           const SizedBox(height: 9),
-          Text(_vpnConnected ? (_fa ? 'برای قطع لمس کن' : 'Tap to disconnect') : (_fa ? 'بر��ی اتصال لمس کن' : 'Tap to connect'), style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          Text(_vpnConnected ? (_fa ? 'برای قطع لمس کن' : 'Tap to disconnect') : (_fa ? 'برای اتصال لمس کن' : 'Tap to connect'), style: const TextStyle(color: Colors.white54, fontSize: 12)),
           if (_selected != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('${_selected!.name} · ${_countryName(_selected!)}', style: const TextStyle(color: Colors.white70))),
         ]),
-      );
-
-  Widget _profileServiceNotice() => Text(
-        _fa ? 'اتصال تا فعال‌شدن دسترسی امن کاربران به پروفایل در Backend انجام نمی‌شود.' : 'Connection will not start until secure client profile access is enabled on the backend.',
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: Colors.white54, fontSize: 12, height: 1.45),
       );
 
   Widget _sectionHeading(String title, String subtitle) => Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)), const SizedBox(height: 3), Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 12))])), const Icon(Icons.public, color: Color(0xFF35D0BA))]);
