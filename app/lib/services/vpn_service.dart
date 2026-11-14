@@ -71,7 +71,11 @@ class VpnService {
       );
       await result.future.timeout(timeout);
     } on TimeoutException {
-      await _engine.stopV2Ray();
+      try {
+        await _engine.stopV2Ray();
+      } catch (_) {
+        // Preserve the timeout so failover can move to another server.
+      }
       throw const VpnConnectionTimeoutException();
     } catch (_) {
       // Do not leak plugin exception details, which may contain profile material.
@@ -80,7 +84,7 @@ class VpnService {
       } catch (_) {
         // Preserve the original connection failure.
       }
-      rethrow;
+      throw const VpnConnectionException();
     } finally {
       await subscription.cancel();
     }
