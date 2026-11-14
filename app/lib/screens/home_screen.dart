@@ -16,10 +16,16 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-enum _ConnectionUi { disconnected, connecting, connected, disconnecting, error }
+enum _ConnectionUi {
+  disconnected,
+  connecting,
+  connected,
+  disconnecting,
+  error,
+}
 
-/// User-facing connection screen. Server configuration and profile management
-/// remain exclusively in the owner web panel; the app exposes no config editor.
+/// صفحهٔ کاربر: فقط اتصال و قطع اتصال.
+/// مدیریت کانفیگ‌ها در پنل وب جداگانهٔ مدیر انجام می‌شود.
 class _HomeScreenState extends State<HomeScreen> {
   final ApiService _api = ApiService();
   final StorageService _storage = StorageService();
@@ -28,9 +34,11 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<V2RayStatus>? _statusSubscription;
   _ConnectionUi _connection = _ConnectionUi.disconnected;
   VpnServer? _activeServer;
+
   String _language = 'fa';
   String _duration = '00:00:00';
   String? _message;
+
   bool _busy = false;
   bool _failoverRunning = false;
   int _currentAttempt = 0;
@@ -42,15 +50,20 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+
     _storage.readLanguage().then((language) {
-      if (mounted) setState(() => _language = language);
+      if (mounted) {
+        setState(() => _language = language);
+      }
     });
+
     _statusSubscription = _vpn.statusChanges.listen(_onEngineStatus);
     _onEngineStatus(_vpn.currentStatus);
   }
 
   void _onEngineStatus(V2RayStatus status) {
     if (!mounted) return;
+
     setState(() {
       switch (status.state.toUpperCase()) {
         case 'CONNECTED':
@@ -58,19 +71,24 @@ class _HomeScreenState extends State<HomeScreen> {
           _duration = status.duration;
           _message = null;
           break;
+
         case 'CONNECTING':
           _connection = _ConnectionUi.connecting;
           break;
+
         case 'DISCONNECTING':
           _connection = _ConnectionUi.disconnecting;
           break;
+
         case 'DISCONNECTED':
-          if (!_failoverRunning || _connection == _ConnectionUi.disconnecting) {
+          if (!_failoverRunning ||
+              _connection == _ConnectionUi.disconnecting) {
             _connection = _ConnectionUi.disconnected;
             _duration = '00:00:00';
             _activeServer = null;
           }
           break;
+
         case 'ERROR':
           if (!_failoverRunning) {
             _connection = _ConnectionUi.error;
@@ -92,6 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _toggleConnection() async {
     if (_busy) return;
+
     if (_connected) {
       await _disconnect();
     } else {
@@ -105,8 +124,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _connection = _ConnectionUi.disconnecting;
       _message = null;
     });
+
     try {
       await _vpn.disconnect();
+
       if (mounted) {
         setState(() {
           _connection = _ConnectionUi.disconnected;
@@ -122,7 +143,9 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 
@@ -131,16 +154,19 @@ class _HomeScreenState extends State<HomeScreen> {
       _busy = true;
       _failoverRunning = true;
       _connection = _ConnectionUi.connecting;
-      _message = _fa ? 'در حال دریافت فهرست سرورها…' : 'Loading available servers…';
+      _message = _fa
+          ? 'در حال دریافت فهرست سرورها…'
+          : 'Loading available servers…';
       _currentAttempt = 0;
       _attemptCount = 0;
     });
 
     try {
-      // Fetch fresh metadata on every connect, so owner panel changes are picked
-      // up without requiring an APK update or a manual app-side config refresh.
+      // فهرست تازه گرفته می‌شود تا تغییرات پنل مدیر در اتصال بعدی اعمال شود.
       final servers = await _api.fetchServers();
+
       if (!mounted) return;
+
       if (servers.isEmpty) {
         setState(() {
           _connection = _ConnectionUi.error;
@@ -153,6 +179,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final previousServerId = await _storage.readServerId();
       if (!mounted) return;
+
       final candidates = <VpnServer>[
         ...servers.where((server) => server.id == previousServerId),
         ...servers.where((server) => server.id != previousServerId),
@@ -161,12 +188,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final connectedServer = await connectWithFallback<VpnServer>(
         candidates: candidates,
-        // Permission denial is global. Profile/API failure is also fatal here:
-        // retrying all profiles cannot fix a backend authorization failure.
+        // خطای API یا ردشدن مجوز VPN با امتحان سرور دیگری حل نمی‌شود.
         isFatal: (error) =>
             error is ApiException || error is VpnPermissionException,
         onAttempt: (server, index) {
           if (!mounted) return;
+
           setState(() {
             _currentAttempt = index + 1;
             _activeServer = server;
@@ -179,13 +206,14 @@ class _HomeScreenState extends State<HomeScreen> {
           });
         },
         attempt: (server) async {
-          // Keep the raw profile in memory only for this one connection attempt.
+          // کانفیگ فقط در حافظه و برای همین تلاش استفاده می‌شود.
           final profile = await _api.fetchServerConfig(server.id);
           await _vpn.connect(profile: profile, remark: server.name);
         },
       );
 
       await _storage.writeServerId(connectedServer.id);
+
       if (mounted) {
         setState(() {
           _activeServer = connectedServer;
@@ -229,7 +257,9 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       _failoverRunning = false;
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 
@@ -249,7 +279,10 @@ class _HomeScreenState extends State<HomeScreen> {
             centerTitle: true,
             title: const Text(
               'NOVA VPN',
-              style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5),
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+              ),
             ),
           ),
           body: SafeArea(
@@ -308,7 +341,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                   padding: const EdgeInsets.only(top: 7),
                                   child: Text(
                                     _duration,
-                                    style: const TextStyle(color: Colors.white60),
+                                    style: const TextStyle(
+                                      color: Colors.white60,
+                                    ),
                                   ),
                                 ),
                               const SizedBox(height: 22),
@@ -323,8 +358,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                       color: Color(0xFF35D0BA),
                                       width: 2,
                                     ),
-                                    backgroundColor:
-                                        const Color(0xFF35D0BA).withValues(alpha: .07),
+                                    backgroundColor: const Color(0xFF35D0BA)
+                                        .withValues(alpha: .07),
                                   ),
                                   child: _busy
                                       ? const SizedBox(
@@ -346,8 +381,12 @@ class _HomeScreenState extends State<HomeScreen> {
                               const SizedBox(height: 14),
                               Text(
                                 _connected
-                                    ? (_fa ? 'برای قطع لمس کن' : 'Tap to disconnect')
-                                    : (_fa ? 'برای اتصال لمس کن' : 'Tap to connect'),
+                                    ? (_fa
+                                        ? 'برای قطع لمس کن'
+                                        : 'Tap to disconnect')
+                                    : (_fa
+                                        ? 'برای اتصال لمس کن'
+                                        : 'Tap to connect'),
                                 style: const TextStyle(color: Colors.white60),
                               ),
                               if (_connection == _ConnectionUi.connecting &&
@@ -370,7 +409,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                   child: Text(
                                     _activeServer!.name,
                                     textAlign: TextAlign.center,
-                                    style: const TextStyle(color: Colors.white70),
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                    ),
                                   ),
                                 ),
                             ],
