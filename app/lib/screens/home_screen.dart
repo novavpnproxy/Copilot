@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/vpn_server.dart';
 import '../services/api_service.dart';
+import '../services/storage_service.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -10,17 +13,32 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final ApiService _api = ApiService();
+  final StorageService _storage = StorageService();
   late Future<List<VpnServer>> _servers;
   VpnServer? _selected;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _servers = _api.fetchServers();
+    _servers = _loadServers();
+  }
+
+  Future<List<VpnServer>> _loadServers() async {
+    final servers = await _api.fetchServers();
+    final savedId = await _storage.readServerId();
+    if (savedId != null) {
+      for (final server in servers) {
+        if (server.id == savedId) _selected = server;
+      }
+    }
+    if (_selected != null && !servers.any((s) => s.id == _selected!.id)) _selected = null;
+    return servers;
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
     _api.close();
     super.dispose();
   }
@@ -34,14 +52,17 @@ class _HomeScreenState extends State<HomeScreen> {
         appBar: AppBar(
           centerTitle: true,
           title: const Text('NOVA VPN', style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5)),
-          actions: [IconButton(tooltip: 'تازه‌سازی فهرست', onPressed: () => setState(() { _selected = null; _servers = _api.fetchServers(); }), icon: const Icon(Icons.refresh))],
+          actions: [
+            IconButton(tooltip: 'تنظیمات', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen())), icon: const Icon(Icons.settings_outlined)),
+            IconButton(tooltip: 'تازه‌سازی سرورها', onPressed: _refresh, icon: const Icon(Icons.refresh)),
+          ],
         ),
         body: SafeArea(
           child: FutureBuilder<List<VpnServer>>(
             future: _servers,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              if (snapshot.hasError) return _message('دریافت فهرست سرورها ناموفق بود.', action: TextButton(onPressed: () => setState(() => _servers = _api.fetchServers()), child: const Text('تلاش دوباره')));
+              if (snapshot.hasError) return _message('دریافت فهرست سرورها ناموفق بود.', action: TextButton(onPressed: _refresh, child: const Text('تلاش دوباره')));
               final servers = snapshot.data ?? const <VpnServer>[];
               if (servers.isEmpty) return _message('در حال حاضر سرور فعالی در دسترس نیست.');
               return ListView(padding: const EdgeInsets.all(16), children: [
@@ -58,17 +79,27 @@ class _HomeScreenState extends State<HomeScreen> {
                       leading: Icon(selected ? Icons.radio_button_checked : Icons.radio_button_off, color: selected ? Theme.of(context).colorScheme.primary : null),
                       title: Text(server.name),
                       subtitle: Text('${_countryName(server)} · ${server.protocol}'),
-                      onTap: () => setState(() => _selected = server),
+                      onTap: () async {
+                        setState(() => _selected = server);
+                        await _storage.writeServerId(server.id);
+                      },
                     ),
                   );
                 }),
                 const SizedBox(height: 12),
-                const Text('اتصال VPN در این نسخه هنوز فعال نشده است؛ تا زمان اتصال موتور واقعی و دریافت وضعیت تأییدشده، وضعیت اتصال یا دکمهٔ اتصال نمایش داده نمی‌شود.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white60, height: 1.5)),
+                const Text('موتور اتصال VPN هنوز به این نسخه افزوده نشده است؛ اتصال یا وضعیت ساختگی نمایش داده نمی‌شود.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white60, height: 1.5)),
               ]);
             },
           ),
         ),
       );
+
+  void _refresh() {
+    setState(() {
+      _selected = null;
+      _servers = _loadServers();
+    });
+  }
 
   Widget _message(String text, {Widget? action}) => Center(
         child: Padding(
