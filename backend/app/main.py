@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import re
 import secrets
@@ -34,7 +35,7 @@ PROFILE_SCHEMES = {
     "HYSTERIA2": {"hysteria2", "hy2"},
 }
 
-app = FastAPI(title="NOVA VPN API", version="0.2.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="NOVA VPN API", version="0.2.1", docs_url=None, redoc_url=None)
 _login_attempts: dict[str, list[float]] = {}
 
 
@@ -135,18 +136,15 @@ class ServerInput(BaseModel):
 
     @field_validator("config")
     @classmethod
-    def config_not_blank(cls, value: str) -> str:
+    def config_has_supported_syntax(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("Configuration cannot be blank")
-        # Accept a URI for the declared protocol, or syntactically valid JSON profile.
-        # This is format validation only: it does not prove that the profile works.
         if "://" in value:
             scheme = value.split("://", 1)[0].lower()
-            if scheme not in PROFILE_SCHEMES[cls._validation_protocol]:
-                raise ValueError("Profile URI scheme does not match the selected protocol")
+            if scheme not in {scheme for schemes in PROFILE_SCHEMES.values() for scheme in schemes}:
+                raise ValueError("Unsupported profile URI scheme")
         elif value.startswith("{"):
-            import json
             try:
                 parsed = json.loads(value)
             except json.JSONDecodeError as exc:
@@ -154,18 +152,11 @@ class ServerInput(BaseModel):
             if not isinstance(parsed, dict):
                 raise ValueError("Profile JSON must be an object")
         else:
-            raise ValueError("Profile must be a matching protocol URI or JSON object")
+            raise ValueError("Profile must be a supported protocol URI or JSON object")
         return value
 
-    @model_validator(mode="before")
-    @classmethod
-    def set_profile_protocol_for_validation(cls, values):
-        # Pydantic validators are intentionally not used to inspect or log profile contents.
-        # A model-level post-validation performs the protocol/profile consistency check below.
-        return values
-
     @model_validator(mode="after")
-    def validate_profile_protocol(self):
+    def validate_profile_protocol_and_location(self):
         value = self.config
         if "://" in value:
             scheme = value.split("://", 1)[0].lower()
@@ -247,7 +238,7 @@ def list_servers() -> dict:
 
 @app.get("/api/v1/servers/{server_id}/config")
 def get_server_config(server_id: str) -> None:
-    # Profile delivery is deliberately disabled until end-user authentication, entitlement checks,
+    # Profile delivery is deliberately disabled until client authentication, entitlement checks,
     # and production abuse controls are implemented. An app-embedded shared secret is not auth.
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
