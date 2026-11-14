@@ -3,8 +3,11 @@ import 'dart:convert';
 
 import 'package:flutter_v2ray_client/flutter_v2ray.dart';
 
-/// Android VPN engine adapter. The engine is a singleton so its native event
-/// listener remains active while screens are rebuilt or navigated.
+/// Singleton adapter around the Android Xray/V2Ray engine.
+///
+/// Profile text is accepted only for the duration of a connection attempt; this
+/// service never stores or logs it. `connect` completes only after an explicit
+/// native `CONNECTED` event, not just after the method-channel start call.
 class VpnService {
   VpnService._() : _engine = V2ray(onStatusChanged: _publishStatus);
 
@@ -18,6 +21,7 @@ class VpnService {
   static V2RayStatus _latestStatus = V2RayStatus();
 
   final V2ray _engine;
+  bool _attemptInProgress = false;
 
   static void _publishStatus(V2RayStatus status) {
     _latestStatus = status;
@@ -31,6 +35,7 @@ class VpnService {
     if (_initialized) return;
     final pending = _initializing;
     if (pending != null) return pending;
+
     final future = _engine.initialize(
       notificationIconResourceType: 'mipmap',
       notificationIconResourceName: 'ic_launcher',
@@ -44,81 +49,94 @@ class VpnService {
     }
   }
 
-  /// Starts a profile and waits for an explicit native CONNECTED event.
-  /// Method-channel completion alone is not treated as an established tunnel.
   Future<void> connect({
     required String profile,
     required String remark,
     Duration timeout = const Duration(seconds: 25),
   }) async {
-    await initialize();
-    if (!await _engine.requestPermission()) {
-      throw const VpnPermissionException();
-    }
-
-    final config = _toEngineConfig(profile);
-    final result = Completer<void>();
-    var sawConnecting = false;
-    final subscription = statusChanges.listen((status) {
-      final state = status.state.toUpperCase();
-      if (state == 'CONNECTING') sawConnecting = true;
-      if (state == 'CONNECTED' && !result.isCompleted) result.complete();
-      if ((state == 'ERROR' || (state == 'DISCONNECTED' && sawConnecting)) &&
-          !result.isCompleted) {
-        result.completeError(const VpnConnectionException());
-      }
-    });
-
+    if (_attemptInProgress) throw const VpnConnectionBusyException();
+    _attemptInProgress = true;
     try {
-      await _engine.startV2Ray(
-        remark: remark,
-        config: config,
-        blockedApps: null,
-        bypassSubnets: null,
-        proxyOnly: false,
-        notificationDisconnectButtonName: 'DISCONNECT',
-      );
-      await result.future.timeout(timeout);
-    } on TimeoutException {
-      await _stopPreservingFailure();
-      throw const VpnConnectionTimeoutException();
-    } on VpnPermissionException {
-      rethrow;
-    } catch (_) {
-      await _stopPreservingFailure();
-      // Do not surface plugin/native text: it can contain profile details.
-      throw const VpnConnectionException();
+      await initialize();
+      if (!await _engine.requestPermission()) {
+        throw const VpnPermissionException();
+      }
+
+      final config = _toEngineConfig(profile);
+      final connected = Completer<void>();
+      var sawConnecting = false;
+      final statusSubscription = statusChanges.listen((status) {
+        final state = status.state.toUpperCase();
+        if (state == 'CONNECTING') sawConnecting = true;
+        if (state == 'CONNECTED' && !connected.isCompleted) {
+          connected.complete();
+        } else if ((state == 'ERROR' ||
+                (state == 'DISCONNECTED' && sawConnecting)) &&
+            !connected.isCompleted) {
+          connected.completeError(const VpnConnectionException());
+        }
+      });
+
+      try {
+        await _engine.startV2Ray(
+          remark: remark,
+          config: config,
+          blockedApps: null,
+          bypassSubnets: null,
+          proxyOnly: false,
+          notificationDisconnectButtonName: 'DISCONNECT',
+        );
+        await connected.future.timeout(timeout);
+      } on TimeoutException {
+        await _stopPreservingFailure();
+        throw const VpnConnectionTimeoutException();
+      } on VpnPermissionException {
+        rethrow;
+      } catch (_) {
+        await _stopPreservingFailure();
+        // Native/plugin exception messages can contain profile material.
+        throw const VpnConnectionException();
+      } finally {
+        await statusSubscription.cancel();
+      }
     } finally {
-      await subscription.cancel();
+      _attemptInProgress = false;
     }
   }
 
   String _toEngineConfig(String profile) {
-    final trimmed = profile.trim();
-    if (trimmed.isEmpty) throw const FormatException('Empty VPN profile.');
-    if (trimmed.contains('://')) {
-      return V2ray.parseFromURL(trimmed).getFullConfiguration();
+    final value = profile.trim();
+    if (value.isEmpty) throw const FormatException('VPN profile is empty.');
+    if (value.contains('://')) {
+      return V2ray.parseFromURL(value).getFullConfiguration();
     }
-    final decoded = jsonDecode(trimmed);
+    final decoded = jsonDecode(value);
     if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('Profile must be a JSON object or supported share link.');
+      throw const FormatException('VPN profile must be a JSON object or supported share link.');
     }
-    return trimmed;
+    return value;
   }
 
   Future<void> _stopPreservingFailure() async {
     try {
       await _engine.stopV2Ray();
     } catch (_) {
-      // Keep the original error for the bounded failover controller.
+      // Do not replace the original connection error with a stop error.
     }
   }
 
-  Future<void> disconnect() => _engine.stopV2Ray();
+  Future<void> disconnect() async {
+    await initialize();
+    await _engine.stopV2Ray();
+  }
 }
 
 class VpnPermissionException implements Exception {
   const VpnPermissionException();
+}
+
+class VpnConnectionBusyException implements Exception {
+  const VpnConnectionBusyException();
 }
 
 class VpnConnectionException implements Exception {
