@@ -1,20 +1,21 @@
-# Flutter app
+# NOVA VPN Flutter client
 
-Flutter Android client for NOVA VPN. It retrieves only active server metadata from the separate backend; the server directory contains no profile/configuration field. The initial database is empty, so the app does not invent available locations.
+The user-facing client shows a single Connect/Disconnect control and no raw profile editor. It fetches active server metadata and requests a server profile only when connecting. The selected/last successful server is tried first, then each other active server once. A native `CONNECTED` status event is required before displaying success.
 
-## Run
+## Android setup
 
-Install Flutter and Android SDK, then from this folder:
+Install Flutter and the Android SDK. If platform scaffolding is absent, from this directory run:
 
 ```sh
+flutter create --platforms=android --org=com.jeyrangroup --project-name=nova_vpn_app --no-pub .
 flutter pub get
 flutter run --dart-define=API_BASE_URL=https://your-api.example
 ```
 
-The API URL is a deployment setting, not a credential. For local Android emulator development, use a local backend address only after explicitly enabling cleartext traffic in a debug-only Android manifest; never ship that setting in a release build.
+The app requires `flutter_v2ray_client` for Android VPN permission and the Xray/V2Ray native engine. Build and verify on a real Android device; emulator/device tunnel behavior and each profile type require acceptance testing.
 
-## Current implementation boundary
+## Security boundary
 
-The splash, server directory, refresh, saved selection, and basic settings UI exist. The VPN engine is **not integrated**. The app deliberately has no connect/disconnect button and does not report a connection until a maintained Android `VpnService`-based engine is selected, integrated, tested with owner-provided profiles, and its status callbacks are wired. Backend profile delivery is also disabled pending user authentication and abuse controls.
+The owner manages profiles separately at the backend `/admin` page. Public server metadata never includes raw configs. Profile delivery currently remains disabled (HTTP 503) until real user/device authorization and abuse controls are deployed. Do not replace this with a secret embedded in the APK. Profiles delivered to a user's device cannot be guaranteed to be impossible to extract; keep their lifetime/access limited and rotate them from the owner panel when needed.
 
-No ping, speed, traffic, user statistics, advertisements, unsupported settings, or sample servers are displayed.
+Do not commit profiles or put them in the APK, UI, or logs. Use only test profiles you are authorized to use. The profiles pasted into chat should be treated as disclosed and unsuitable for private traffic.
