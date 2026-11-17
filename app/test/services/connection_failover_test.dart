@@ -17,7 +17,8 @@ void main() {
       expect(result, 3);
     });
 
-    test('does not retry fatal failures such as permission or API errors', () async {
+    test('does not retry fatal failures such as permission or API errors',
+        () async {
       final attempts = <int>[];
       await expectLater(
         connectWithFallback<int>(
@@ -44,7 +45,13 @@ void main() {
           },
           isFatal: (_) => false,
         ),
-        throwsA(isA<AllCandidatesFailedException>().having((e) => e.attemptedCount, 'attemptedCount', 2)),
+        throwsA(
+          isA<AllCandidatesFailedException>().having(
+            (error) => error.attemptedCount,
+            'attemptedCount',
+            2,
+          ),
+        ),
       );
       expect(attempts, [1, 2]);
     });
