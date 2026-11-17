@@ -84,7 +84,9 @@ class ApiService {
 
     if (response.statusCode != 200) {
       // بدنهٔ پاسخ سرور را به UI منتقل نمی‌کنیم.
-      throw ApiException('Server profile unavailable (${response.statusCode}).');
+      throw ApiException(
+        'Server profile unavailable (${response.statusCode}).',
+      );
     }
 
     final decoded = jsonDecode(response.body);
