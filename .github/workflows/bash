@@ -1,0 +1,20 @@
+ pwd
+      
+ ls
+      
+ cd app
+
+flutter pub get
+      
+git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+      
+export PATH="$HOME/flutter/bin:$PATH"
+
+flutter --version
+
+cd /workspaces/Copilot/app
+
+flutter pub get
+
+pwd
+ls
