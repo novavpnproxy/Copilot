@@ -1,20 +1,25 @@
- pwd
+"این گردش کاری برای ساخت و نصب اپلیکیشنNovaVpn میباشد"
+
+ 
+"name": "NovaVpn"
+
+'pwd'
       
- ls
+ "ls"
       
- cd app
+ "cd app"
 
-flutter pub get
+"flutter pub get"
       
-git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+"git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
       
-export PATH="$HOME/flutter/bin:$PATH"
+"export PATH="$HOME/flutter/bin:$PATH"
 
-flutter --version
+"flutter --version"
 
-cd /workspaces/Copilot/app
+"cd/workspaces/Copilot/app"
 
-flutter pub get
+"flutter pub get"
 
-pwd
-ls
+"pwd"
+"ls"
