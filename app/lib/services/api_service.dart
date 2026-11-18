@@ -3,39 +3,36 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/vpn_server.dart';
+import '../storage/secure_storage_service.dart';
 
-/// دریافت متادیتای عمومی سرورها و پروفایل هنگام اتصال.
-/// پروفایل خام در این سرویس ذخیره یا در پاسخ فهرست سرورها قرار نمی‌گیرد.
 class ApiService {
   ApiService({
     http.Client? client,
+    SecureStorageService? storage,
     String? baseUrl,
   })  : _client = client ?? http.Client(),
+        _storage = storage ?? const SecureStorageService(),
         _baseUrl = baseUrl ?? const String.fromEnvironment('API_BASE_URL');
 
   final http.Client _client;
+  final SecureStorageService _storage;
   final String _baseUrl;
 
   Uri _uri(String path) {
     if (_baseUrl.isEmpty) {
-      throw StateError('API_BASE_URL is not configured for this build.');
+      throw StateError('API_BASE_URL is not configured.');
     }
 
     final base = Uri.tryParse(_baseUrl);
-    if (base == null || !base.hasAuthority || base.host.isEmpty) {
+    if (base == null || !base.hasAuthority) {
       throw StateError('API_BASE_URL is invalid.');
     }
 
-    const localHosts = {'10.0.2.2', '127.0.0.1', 'localhost'};
+    const localHosts = {'localhost', '127.0.0.1', '10.0.2.2'};
     final localHttp = base.scheme == 'http' && localHosts.contains(base.host);
 
     if (base.scheme != 'https' && !localHttp) {
       throw StateError('The API must use HTTPS except for local development.');
-    }
-    if (base.userInfo.isNotEmpty || base.hasQuery || base.hasFragment) {
-      throw StateError(
-        'API_BASE_URL must not contain credentials, query, or fragment.',
-      );
     }
 
     return base.resolve(path);
@@ -50,7 +47,7 @@ class ApiService {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
-      throw ApiException('Server list unavailable (${response.statusCode}).');
+      throw ApiException('Server list unavailable.');
     }
 
     final decoded = jsonDecode(response.body);
@@ -59,31 +56,36 @@ class ApiService {
     }
 
     return (decoded['servers'] as List)
-        .map(
-          (item) => VpnServer.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
+        .map((item) =>
+            VpnServer.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList(growable: false);
   }
 
-  /// کانفیگ فقط هنگام اتصال درخواست می‌شود.
-  /// بک‌اند فعلاً عمداً این مسیر را تا آماده‌شدن احراز هویت کاربر می‌بندد.
   Future<String> fetchServerConfig(String serverId) async {
-    if (serverId.isEmpty) {
-      throw const FormatException('Server ID is empty.');
+    final token = await _storage.readAccessToken();
+    if (token == null || token.trim().isEmpty) {
+      throw const ApiException('Device authentication is required.');
     }
 
-    final path = '/api/v1/servers/${Uri.encodeComponent(serverId)}/config';
+    final path =
+        '/api/v1/servers/${Uri.encodeComponent(serverId)}/config';
+
     final response = await _client
         .get(
           _uri(path),
-          headers: const {'Cache-Control': 'no-store'},
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Cache-Control': 'no-store',
+          },
         )
         .timeout(const Duration(seconds: 15));
 
+    if (response.statusCode == 401) {
+      await _storage.clearAccessToken();
+      throw const ApiException('Device authentication expired.');
+    }
+
     if (response.statusCode != 200) {
-      // بدنهٔ پاسخ سرور را به UI منتقل نمی‌کنیم.
       throw ApiException(
         'Server profile unavailable (${response.statusCode}).',
       );
