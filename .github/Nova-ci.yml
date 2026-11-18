@@ -1,0 +1,81 @@
+name: NOVA VPN CI
+
+on:
+  push:
+    paths:
+      - "app/**"
+      - "backend/**"
+      - ".github/workflows/**"
+      - ".github/workflows-build-main.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "backend/**"
+      - ".github/workflows/**"
+      - ".github/workflows-build-main.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nova-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run backend tests
+        run: python -m pytest -q
+
+  android:
+    name: Flutter checks and Android debug build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android platform files when absent
+        shell: bash
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android --org=com.jeyrangroup --project-name=nova_vpn_app --no-pub .
+          fi
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Check Dart formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze Flutter project
+        run: flutter analyze
+      - name: Run Flutter tests
+        run: flutter test
+      - name: Build Android debug APK
+        run: flutter build apk --debug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-vpn-debug-apk
+          path: app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
