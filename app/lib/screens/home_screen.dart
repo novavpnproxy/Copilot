@@ -8,6 +8,8 @@ import '../services/api_service.dart';
 import '../services/connection_failover.dart';
 import '../services/storage_service.dart';
 import '../services/vpn_service.dart';
+import 'server_list_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,16 +18,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-enum _ConnectionUi {
-  disconnected,
-  connecting,
-  connected,
-  disconnecting,
-  error,
-}
+enum _ConnectionUi { disconnected, connecting, connected, disconnecting, error }
 
-/// صفحهٔ کاربر: فقط اتصال و قطع اتصال.
-/// مدیریت کانفیگ‌ها در پنل وب جداگانهٔ مدیر انجام می‌شود.
 class _HomeScreenState extends State<HomeScreen> {
   final ApiService _api = ApiService();
   final StorageService _storage = StorageService();
@@ -34,11 +28,10 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<V2RayStatus>? _statusSubscription;
   _ConnectionUi _connection = _ConnectionUi.disconnected;
   VpnServer? _activeServer;
-
+  VpnServer? _preferredServer;
   String _language = 'fa';
   String _duration = '00:00:00';
   String? _message;
-
   bool _busy = false;
   bool _failoverRunning = false;
   int _currentAttempt = 0;
@@ -50,20 +43,15 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-
     _storage.readLanguage().then((language) {
-      if (mounted) {
-        setState(() => _language = language);
-      }
+      if (mounted) setState(() => _language = language);
     });
-
     _statusSubscription = _vpn.statusChanges.listen(_onEngineStatus);
     _onEngineStatus(_vpn.currentStatus);
   }
 
   void _onEngineStatus(V2RayStatus status) {
     if (!mounted) return;
-
     setState(() {
       switch (status.state.toUpperCase()) {
         case 'CONNECTED':
@@ -71,24 +59,19 @@ class _HomeScreenState extends State<HomeScreen> {
           _duration = status.duration;
           _message = null;
           break;
-
         case 'CONNECTING':
           _connection = _ConnectionUi.connecting;
           break;
-
         case 'DISCONNECTING':
           _connection = _ConnectionUi.disconnecting;
           break;
-
         case 'DISCONNECTED':
-          if (!_failoverRunning ||
-              _connection == _ConnectionUi.disconnecting) {
+          if (!_failoverRunning || _connection == _ConnectionUi.disconnecting) {
             _connection = _ConnectionUi.disconnected;
             _duration = '00:00:00';
             _activeServer = null;
           }
           break;
-
         case 'ERROR':
           if (!_failoverRunning) {
             _connection = _ConnectionUi.error;
@@ -108,9 +91,25 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  Future<void> _chooseServer() async {
+    if (_busy || _connected) return;
+    final selected = await Navigator.of(context).push<VpnServer>(
+      MaterialPageRoute(
+        builder: (_) => ServerListScreen(language: _language),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    await _storage.writeServerId(selected.id);
+    if (mounted) {
+      setState(() {
+        _preferredServer = selected;
+        _message = null;
+      });
+    }
+  }
+
   Future<void> _toggleConnection() async {
     if (_busy) return;
-
     if (_connected) {
       await _disconnect();
     } else {
@@ -124,10 +123,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _connection = _ConnectionUi.disconnecting;
       _message = null;
     });
-
     try {
       await _vpn.disconnect();
-
       if (mounted) {
         setState(() {
           _connection = _ConnectionUi.disconnected;
@@ -143,9 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -154,19 +149,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _busy = true;
       _failoverRunning = true;
       _connection = _ConnectionUi.connecting;
-      _message = _fa
-          ? 'در حال دریافت فهرست سرورها…'
-          : 'Loading available servers…';
+      _message = _fa ? 'در حال دریافت فهرست سرورها…' : 'Loading available servers…';
       _currentAttempt = 0;
       _attemptCount = 0;
     });
 
     try {
-      // فهرست تازه گرفته می‌شود تا تغییرات پنل مدیر در اتصال بعدی اعمال شود.
+      // Fresh metadata is fetched each time so owner changes need no APK update.
       final servers = await _api.fetchServers();
-
       if (!mounted) return;
-
       if (servers.isEmpty) {
         setState(() {
           _connection = _ConnectionUi.error;
@@ -177,46 +168,42 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      final previousServerId = await _storage.readServerId();
+      final savedId = await _storage.readServerId();
       if (!mounted) return;
-
+      final preferredId = _preferredServer?.id ?? savedId;
       final candidates = <VpnServer>[
-        ...servers.where((server) => server.id == previousServerId),
-        ...servers.where((server) => server.id != previousServerId),
+        ...servers.where((server) => server.id == preferredId),
+        ...servers.where((server) => server.id != preferredId),
       ];
       _attemptCount = candidates.length;
 
       final connectedServer = await connectWithFallback<VpnServer>(
         candidates: candidates,
-        // خطای API یا ردشدن مجوز VPN با امتحان سرور دیگری حل نمی‌شود.
         isFatal: (error) =>
             error is ApiException || error is VpnPermissionException,
         onAttempt: (server, index) {
           if (!mounted) return;
-
           setState(() {
             _currentAttempt = index + 1;
             _activeServer = server;
             _connection = _ConnectionUi.connecting;
             _message = index == 0
                 ? (_fa ? 'در حال اتصال…' : 'Connecting…')
-                : (_fa
-                    ? 'سرور قبلی پاسخ نداد؛ تلاش با سرور بعدی…'
-                    : 'Previous server failed; trying the next server…');
+                : (_fa ? 'تلاش با سرور بعدی…' : 'Trying the next server…');
           });
         },
         attempt: (server) async {
-          // کانفیگ فقط در حافظه و برای همین تلاش استفاده می‌شود.
+          // Profile remains transient and is requested only for this attempt.
           final profile = await _api.fetchServerConfig(server.id);
           await _vpn.connect(profile: profile, remark: server.name);
         },
       );
 
       await _storage.writeServerId(connectedServer.id);
-
       if (mounted) {
         setState(() {
           _activeServer = connectedServer;
+          _preferredServer = connectedServer;
           _connection = _ConnectionUi.connected;
           _message = null;
         });
@@ -233,8 +220,8 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _connection = _ConnectionUi.error;
           _message = _fa
-              ? 'دریافت پروفایل امن ممکن نیست؛ دسترسی کاربران باید در سرور فعال شود.'
-              : 'Secure profile access is unavailable on the backend.';
+              ? 'دریافت امن پروفایل از سمت سرویس در دسترس نیست.'
+              : 'Secure profile delivery is unavailable from the service.';
         });
       }
     } on AllCandidatesFailedException catch (error) {
@@ -257,9 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       _failoverRunning = false;
-      if (mounted) {
-        setState(() => _busy = false);
-      }
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -279,11 +264,21 @@ class _HomeScreenState extends State<HomeScreen> {
             centerTitle: true,
             title: const Text(
               'NOVA VPN',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.5,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5),
             ),
+            actions: [
+              IconButton(
+                tooltip: _fa ? 'تنظیمات' : 'Settings',
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                  final language = await _storage.readLanguage();
+                  if (mounted) setState(() => _language = language);
+                },
+              ),
+            ],
           ),
           body: SafeArea(
             child: Center(
@@ -299,24 +294,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         size: 82,
                         color: Color(0xFF35D0BA),
                       ),
-                      const SizedBox(height: 14),
-                      const Text(
-                        'NOVA VPN',
-                        style: TextStyle(
-                          fontSize: 25,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 2,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 12),
                       const Text(
                         'JEYRAN GROUP',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          letterSpacing: 2,
-                        ),
+                        style: TextStyle(color: Colors.white54, letterSpacing: 2),
                       ),
-                      const SizedBox(height: 30),
+                      const SizedBox(height: 24),
                       Card(
                         color: const Color(0xFF101A2B),
                         shape: RoundedRectangleBorder(
@@ -341,9 +324,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   padding: const EdgeInsets.only(top: 7),
                                   child: Text(
                                     _duration,
-                                    style: const TextStyle(
-                                      color: Colors.white60,
-                                    ),
+                                    style: const TextStyle(color: Colors.white60),
                                   ),
                                 ),
                               const SizedBox(height: 22),
@@ -409,13 +390,23 @@ class _HomeScreenState extends State<HomeScreen> {
                                   child: Text(
                                     _activeServer!.name,
                                     textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                    ),
+                                    style: const TextStyle(color: Colors.white70),
                                   ),
                                 ),
                             ],
                           ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      OutlinedButton.icon(
+                        onPressed: _busy || _connected ? null : _chooseServer,
+                        icon: const Icon(Icons.public),
+                        label: Text(
+                          _preferredServer == null
+                              ? (_fa
+                                  ? 'انتخاب کشور و سرور'
+                                  : 'Choose country and server')
+                              : '${_fa ? 'انتخاب‌شده' : 'Selected'}: ${_preferredServer!.name}',
                         ),
                       ),
                       if (_message != null)
