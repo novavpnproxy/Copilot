@@ -47,7 +47,7 @@ def initialize_client_table() -> None:
                 device_id TEXT PRIMARY KEY,
                 first_seen_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL,
-                enabled INTEGER NOT LIMITED 1
+                enabled INTEGER NOT NULL DEFAULT 1
             )
         """)
         conn.execute("""
