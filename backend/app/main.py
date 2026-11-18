@@ -1,3 +1,4 @@
+from .profile_delivery import install_profile_delivery
 from __future__ import annotations
 
 import hmac
@@ -263,16 +264,6 @@ def list_servers() -> dict:
     return {"servers": [public_server(row) for row in rows]}
 
 
-@app.get("/api/v1/servers/{server_id}/config")
-def get_server_config(server_id: str) -> None:
-    # Fail closed: the app has no user/device authorization yet. Never make raw configs
-    # public or use an app-embedded shared secret as a substitute for user authorization.
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="VPN profile delivery is unavailable until client authorization is configured",
-        headers={"Cache-Control": "no-store"},
-    )
-
 
 @app.get("/api/v1/admin/servers")
 def admin_list_servers(_: dict = Depends(admin_claims)) -> dict:
@@ -334,3 +325,11 @@ def delete_server(server_id: str, _: dict = Depends(admin_claims)) -> Response:
 @app.get("/admin", include_in_schema=False)
 def admin_page() -> FileResponse:
     return FileResponse(APP_DIR / "admin.html", headers={"Cache-Control": "no-store"})
+install_profile_delivery(
+    app,
+    database=database,
+    admin_claims=admin_claims,
+    jwt_secret=JWT_SECRET,
+    issuer=TOKEN_ISSUER,
+    algorithm=ALGORITHM,
+)
