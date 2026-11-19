@@ -22,8 +22,71 @@ class VpnService {
   final V2ray _engine;
   bool _attemptInProgress = false;
 
-  static void _publishStatus(V2RayStatus status) {
+  
+  // برای آزمایش می‌توان موقتاً hours: 2 را به minutes: 2 تغییر داد.
+  static const Duration _sessionLimit = Duration(hours: 2);
+
+  static Timer? _sessionTimer;
+  static bool _sessionStarted = false;
+  static int _sessionGeneration = 0;
+
+  static void _cancelSessionTimer() {
+    _sessionGeneration++;
+    _sessionTimer?.cancel();
+    _sessionTimer = null;
+    _sessionStarted = false;
+  }
+
+  static void _startSessionTimer() {
+    // موتور ممکن است چندین بار CONNECTED بفرستد.
+    // زمان اتصال نباید با هر پیام از ابتدا محاسبه شود.
+    if (_sessionStarted) return;
+
+    _sessionStarted = true;
+    final generation = ++_sessionGeneration;
+
+    _sessionTimer = Timer(_sessionLimit, () {
+      unawaited(_stopExpiredSession(generation));
+    });
+  }
+
+  static Future<void> _stopExpiredSession(int generation) async {
+    if (generation != _sessionGeneration || !_sessionStarted) {
+      return;
+    }
+
+    try {
+      await instance._engine.stopV2Ray();
+
+      // وضعیت رابط کاربری را خود موتور اعلام می‌کند.
+      // اینجا وضعیت ساختگی DISCONNECTED ارسال نمی‌کنیم.
+    } catch (_) {
+      // توقف ممکن است موقتاً خطا بدهد.
+      // فقط برای همین اتصال دوباره تلاش می‌کنیم.
+    }
+
+    if (generation != _sessionGeneration || !_sessionStarted) {
+      return;
+    }
+
+    // اگر موتور هنوز قطع‌شدن را اعلام نکرد، دوباره درخواست قطع بده.
+    _sessionTimer = Timer(const Duration(seconds: 5), () {
+      unawaited(_stopExpiredSession(generation));
+    });
+  }
+    static void _publishStatus(V2RayStatus status) {
     _latestStatus = status;
+
+    switch (status.state.toUpperCase()) {
+      case 'CONNECTED':
+        _startSessionTimer();
+        break;
+
+      case 'DISCONNECTED':
+        _cancelSessionTimer();
+        break;
+    }
+
     if (!_statuses.isClosed) {
       _statuses.add(status);
     }
@@ -66,10 +129,11 @@ class VpnService {
     }
 
     _attemptInProgress = true;
+    _cancelSessionTimer();
 
     try {
       await initialize();
-
+      
       if (!await _engine.requestPermission()) {
         throw const VpnPermissionException();
       }
