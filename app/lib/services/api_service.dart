@@ -47,7 +47,7 @@ class ApiService {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
-      throw ApiException('Server list unavailable.');
+      throw const ApiException('Server list unavailable.');
     }
 
     final decoded = jsonDecode(response.body);
