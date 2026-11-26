@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 import '../models/vpn_server.dart';
@@ -33,7 +34,9 @@ class _ServerListScreenState extends State<ServerListScreen> {
   }
 
   String _countryName(VpnServer server) {
-    if (!server.locationVerified) return _fa ? 'موقعیت نامشخص' : 'Unknown location';
+    if (!server.locationVerified) {
+      return _fa ? 'موقعیت نامشخص' : 'Unknown location';
+    }
     return (_fa ? server.countryNameFa : server.countryNameEn) ??
         (_fa ? 'موقعیت نامشخص' : 'Unknown location');
   }

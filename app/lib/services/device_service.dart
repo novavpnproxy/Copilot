@@ -1,8 +1,7 @@
-import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 
-import '../storage/secure_storage_service.dart';
+import '../Storage/secure_storage_service.dart';
 
 class DeviceService {
   DeviceService({SecureStorageService? storage})

@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../storage/secure_storage_service.dart';
+import '../Storage/secure_storage_service.dart';
 import 'device_service.dart';
 
 class AuthService {
@@ -44,7 +44,7 @@ class AuthService {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200 && response.statusCode != 201) {
-      throw AuthException('Device registration failed.');
+      throw const AuthException('Device registration failed.');
     }
 
     final decoded = jsonDecode(response.body);

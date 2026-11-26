@@ -7,6 +7,8 @@ environment:
   sdk: ">=3.5.0 <4.0.0"
 
 dependencies:
+  flutter:
+    sdk: flutter
   crypto: ^3.0.6
   flutter_secure_storage: ^9.2.4
   http: ^1.2.2
@@ -21,4 +23,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  flutter_secure_storage: ^9.2.4

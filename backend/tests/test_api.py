@@ -70,7 +70,7 @@ def test_admin_server_management_never_returns_config_in_public_directory(client
 
 def test_raw_profile_delivery_remains_closed_without_client_authorization(client):
     response = client.get("/api/v1/servers/server-id/config")
-    assert response.status_code == 503
+    assert response.status_code == 401
     assert response.headers["cache-control"] == "no-store"
     assert "config" not in response.json()
 

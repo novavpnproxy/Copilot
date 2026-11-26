@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/vpn_server.dart';
-import '../storage/secure_storage_service.dart';
+import '../Storage/secure_storage_service.dart';
 
 class ApiService {
   ApiService({
@@ -47,7 +47,7 @@ class ApiService {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
-      throw ApiException('Server list unavailable.');
+      throw const ApiException('Server list unavailable.');
     }
 
     final decoded = jsonDecode(response.body);
