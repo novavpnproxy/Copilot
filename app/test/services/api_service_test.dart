@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:nova_vpn_app/Storage/secure_storage_service.dart';
 import 'package:nova_vpn_app/services/api_service.dart';
 
 void main() {
@@ -47,6 +48,7 @@ void main() {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/v1/servers/server-1/config');
         expect(request.headers['cache-control'], 'no-store');
+        expect(request.headers['authorization'], 'Bearer test-access-token');
 
         return http.Response(
           jsonEncode({'config': 'vless://owner-controlled'}),
@@ -56,6 +58,7 @@ void main() {
 
       final api = ApiService(
         client: client,
+        storage: _FakeSecureStorage(),
         baseUrl: 'https://vpn.example',
       );
 
@@ -76,6 +79,7 @@ void main() {
 
       final api = ApiService(
         client: client,
+        storage: _FakeSecureStorage(),
         baseUrl: 'https://vpn.example',
       );
 
@@ -114,4 +118,25 @@ void main() {
       api.close();
     });
   });
+}
+
+
+class _FakeSecureStorage implements SecureStorageService {
+  @override
+  Future<String?> readAccessToken() async => 'test-access-token';
+
+  @override
+  Future<void> writeAccessToken(String token) async {}
+
+  @override
+  Future<void> clearAccessToken() async {}
+
+  @override
+  Future<String?> readDeviceId() async => null;
+
+  @override
+  Future<void> writeDeviceId(String deviceId) async {}
+
+  @override
+  Future<void> clearDeviceId() async {}
 }
