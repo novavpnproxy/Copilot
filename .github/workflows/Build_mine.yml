@@ -1,3 +1,0 @@
-# Legacy note only: the actual runnable CI workflow is .github/workflows/nova-ci.yml.
-# This file was previously populated with a project brief, not valid GitHub Actions.
-# CI runs backend tests and Flutter analysis/tests/debug APK builds; it does not claim a production release.
