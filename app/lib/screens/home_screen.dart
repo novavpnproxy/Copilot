@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_v2ray_client/flutter_v2ray.dart';
 
 import '../models/vpn_server.dart';
