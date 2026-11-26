@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .profile_delivery import install_profile_delivery
+from .Profile_delivery import install_profile_delivery
 
 import hmac
 import json
