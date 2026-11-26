@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../storage/secure_storage_service.dart';
+import '../Storage/secure_storage_service.dart';
 import 'device_service.dart';
 
 class AuthService {
