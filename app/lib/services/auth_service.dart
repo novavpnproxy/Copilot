@@ -44,7 +44,7 @@ class AuthService {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200 && response.statusCode != 201) {
-      throw AuthException('Device registration failed.');
+      throw const AuthException('Device registration failed.');
     }
 
     final decoded = jsonDecode(response.body);
